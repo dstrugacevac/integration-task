@@ -8,7 +8,6 @@ import java.util.List;
 
 public interface AccountRepository extends JpaRepository<Account, Long> {
 
-
     @Query("SELECT a FROM Account a WHERE a.lastModified >= :lastModified")
     List<Account> findAllModifiedAfter(LocalDateTime lastModified);
 }

@@ -34,9 +34,9 @@ public class SalesforceService {
     private String accessToken;
 
     public void authenticate() {
-        MultiValueMap<String, String> authParams = buildAuthParams();
+        MultiValueMap<String, String> body = buildAuthBody();
 
-        HttpEntity<MultiValueMap<String, String>> request = createAuthRequest(authParams);
+        HttpEntity<MultiValueMap<String, String>> request = createAuthRequest(body);
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 salesforceConfig.getLoginUrl(),
@@ -45,7 +45,12 @@ public class SalesforceService {
                 Map.class
         );
 
-        handleAuthResponse(response);
+        if (response.getStatusCode() == HttpStatus.OK) {
+            accessToken = (String) response.getBody().get("access_token");
+            log.info("Successfully authenticated with Salesforce");
+        } else {
+            throw new SalesforceAuthenticationException("Failed to authenticate with Salesforce");
+        }
     }
 
     public List<Account> saveAccounts(List<Account> accounts) {
@@ -103,11 +108,11 @@ public class SalesforceService {
             if (e.getStatusCode() == HttpStatus.UNAUTHORIZED) {
                 return false;
             }
-            throw new SalesforceAuthenticationException("Error while validating access token");
         }
+        return false;
     }
 
-    private MultiValueMap<String, String> buildAuthParams() {
+    private MultiValueMap<String, String> buildAuthBody() {
         MultiValueMap<String, String> params = new LinkedMultiValueMap();
         params.add("grant_type", "password");
         params.add("username", salesforceConfig.getUsername());
@@ -117,19 +122,10 @@ public class SalesforceService {
         return params;
     }
 
-    private HttpEntity<MultiValueMap<String, String>> createAuthRequest(MultiValueMap<String, String> params) {
+    private HttpEntity<MultiValueMap<String, String>> createAuthRequest(MultiValueMap<String, String> body) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-        return new HttpEntity<>(params, headers);
-    }
-
-    private void handleAuthResponse(ResponseEntity<Map> response) {
-        if (response.getStatusCode() == HttpStatus.OK) {
-            accessToken = (String) response.getBody().get("access_token");
-            log.info("Successfully authenticated with Salesforce");
-        } else {
-            throw new SalesforceAuthenticationException("Failed to authenticate with Salesforce");
-        }
+        return new HttpEntity<>(body, headers);
     }
 
     private String getIdFromResponse(ResponseEntity<Map> response) {
@@ -151,18 +147,24 @@ public class SalesforceService {
         body.put("object", ACCOUNT_OBJECT);
         body.put("contentType", "CSV");
 
-        String jsonBody = createJsonContent(body);
+        String jsonBody = convertBodyToString(body);
         HttpHeaders headers = createHeaders();
 
         HttpEntity<String> request = new HttpEntity<>(jsonBody, headers);
 
         ResponseEntity<Map> response = restTemplate.exchange(url, HttpMethod.POST, request, Map.class);
-        return handleJobResponse(response);
+
+        if (response.getStatusCode() == HttpStatus.OK) {
+            String jobId = (String) response.getBody().get("id");
+            log.info("Ingest job started successfully with ID: {}", jobId);
+            return jobId;
+        }
+        throw new SalesforceJobException("Failed to start ingest job");
     }
 
     private void putAccountInfoOnJob(List<Account> accounts, String jobId) {
         String url = buildApiUrl("/services/data/" + API_VERSION + "/jobs/ingest/" + jobId + "/batches");
-        String jsonBody = createJsonContent(accounts);
+        String jsonBody = createJsonBody(accounts);
         HttpHeaders headers = createCsvHeaders();
 
         HttpEntity<String> request = new HttpEntity<>(jsonBody, headers);
@@ -176,7 +178,7 @@ public class SalesforceService {
     private void closeJobAndStartProcessing(String jobId) {
         String jobUrl = buildApiUrl("/services/data/" + API_VERSION + "/jobs/ingest/" + jobId);
         Map body = Map.of("state", "UploadComplete");
-        String bodyJson = createJsonContent(body);
+        String bodyJson = convertBodyToString(body);
         HttpHeaders headers = createHeaders();
         HttpEntity<String> request = new HttpEntity<>(bodyJson, headers);
 
@@ -211,10 +213,10 @@ public class SalesforceService {
     private String createJsonBody(Account account) {
         Map<String, String> accountData = new HashMap<>();
         accountData.put("Name", account.getName() + " " + account.getSurname());
-        return createJsonContent(account);
+        return convertBodyToString(account);
     }
 
-    private String createJsonContent(Object body) {
+    private String convertBodyToString(Object body) {
         try {
             return objectMapper.writeValueAsString(body);
         } catch (Exception e) {
@@ -222,7 +224,7 @@ public class SalesforceService {
         }
     }
 
-    private String createJsonContent(List<Account> accounts) {
+    private String createJsonBody(List<Account> accounts) {
         StringBuilder json = new StringBuilder("Id,Name\n");
         accounts.forEach(account ->
                 json.append(String.format("%s,%s %s\n",
@@ -232,14 +234,5 @@ public class SalesforceService {
                 ))
         );
         return json.toString();
-    }
-
-    private String handleJobResponse(ResponseEntity<Map> response) {
-        if (response.getStatusCode() == HttpStatus.OK) {
-            String jobId = (String) response.getBody().get("id");
-            log.info("Ingest job started successfully with ID: {}", jobId);
-            return jobId;
-        }
-        throw new SalesforceJobException("Failed to start ingest job");
     }
 }

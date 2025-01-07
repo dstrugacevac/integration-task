@@ -1,9 +1,9 @@
 package integration.task.accountmanagement;
 
 import jakarta.persistence.*;
-import jakarta.validation.constraints.Email;
 import lombok.Data;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Data
@@ -22,10 +22,9 @@ public class Account {
     private String surname;
 
     @Column(name = "date_of_birth")
-    private LocalDateTime dateOfBirth;
+    private LocalDate dateOfBirth;
 
     @Column(name = "email")
-    @Email
     private String email;
 
     @Column(name = "salesforce_id")
